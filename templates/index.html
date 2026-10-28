@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Gate</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0f172a;color:#fff;text-align:center;margin:0;padding:24px}
+  h1{margin-top:30px}
+  #phrase{font-size:1.6rem;background:#1e293b;padding:16px;border-radius:12px;margin:20px 0}
+  button{font-size:1.2rem;padding:18px 32px;border:0;border-radius:50px;background:#22c55e;color:#fff}
+  button.rec{background:#ef4444}
+  #msg{margin-top:24px;font-size:1.2rem;min-height:2em}
+  .ok{color:#4ade80}.bad{color:#f87171}
+</style>
+</head>
+<body>
+<h1>🔐 Voice Gate</h1>
+<p>Speak this phrase:</p>
+<div id="phrase">...</div>
+<button id="btn">🎤 Press & Speak</button>
+<div id="msg"></div>
+
+<script>
+const btn = document.getElementById('btn'), msg = document.getElementById('msg');
+let ctx, stream, proc, chunks = [], recording = false;
+
+async function newPhrase(){
+  const r = await fetch('/phrase'); document.getElementById('phrase').textContent = (await r.json()).phrase;
+}
+newPhrase();
+
+function encodeWAV(samples, rate){
+  const buf = new ArrayBuffer(44 + samples.length*2), v = new DataView(buf);
+  const w = (o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
+  w(0,'RIFF'); v.setUint32(4,36+samples.length*2,true); w(8,'WAVEfmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true);
+  v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,samples.length*2,true);
+  for(let i=0;i<samples.length;i++){
+    const s=Math.max(-1,Math.min(1,samples[i])); v.setInt16(44+i*2,s<0?s*0x8000:s*0x7FFF,true);
+  }
+  return new Blob([v],{type:'audio/wav'});
+}
+
+async function start(){
+  stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  ctx = new (window.AudioContext||window.webkitAudioContext)();
+  const src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(4096,1,1); chunks = [];
+  proc.onaudioprocess = e => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  src.connect(proc); proc.connect(ctx.destination);
+  recording = true; btn.textContent = '⏹ Stop'; btn.classList.add('rec'); msg.textContent = 'Listening...';
+}
+
+async function stop(){
+  recording = false; btn.classList.remove('rec'); btn.textContent = '🎤 Press & Speak';
+  proc.disconnect(); stream.getTracks().forEach(t=>t.stop());
+  const len = chunks.reduce((a,c)=>a+c.length,0), all = new Float32Array(len);
+  let o=0; for(const c of chunks){all.set(c,o);o+=c.length}
+  const wav = encodeWAV(all, ctx.sampleRate); ctx.close();
+  msg.textContent = 'Verifying...'; msg.className='';
+  const fd = new FormData(); fd.append('audio', wav, 'v.wav');
+  try{
+    const r = await fetch('/verify',{method:'POST',body:fd}); const d = await r.json();
+    msg.textContent = d.msg; msg.className = d.ok ? 'ok' : 'bad';
+  }catch(e){ msg.textContent='Server error'; msg.className='bad'; }
+  newPhrase();
+}
+
+btn.onclick = () => recording ? stop() : start();
+</script>
+</body>
+</html>

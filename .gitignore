@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+voices.npy
+samples/
+.pretrained_ecapa/
+pretrained_ecapa/

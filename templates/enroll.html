@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enroll Voice</title>
+<style>
+ body{font-family:system-ui,sans-serif;background:#0f172a;color:#fff;text-align:center;padding:24px}
+ input{font-size:1.1rem;padding:12px;border-radius:10px;border:0;margin:6px;width:70%;max-width:300px}
+ button{font-size:1.2rem;padding:18px 32px;border:0;border-radius:50px;background:#22c55e;color:#fff;margin-top:14px}
+ button.rec{background:#ef4444}
+ #phrase{font-size:1.4rem;background:#1e293b;padding:14px;border-radius:12px;margin:16px 0}
+ #msg{margin-top:18px;font-size:1.1rem;min-height:2em} #info{opacity:.7;margin-top:14px}
+</style></head><body>
+<h2>🎙 Voice Enrollment</h2>
+<input id="name" placeholder="Naam (jaise Gaurav)"><br>
+<input id="pin" placeholder="PIN" type="password"><br>
+<p>Har baar ye bolo (5-6 second, normal awaaz me):</p>
+<div id="phrase">...</div>
+<button id="btn">🎤 Record</button>
+<div id="msg"></div><div id="info"></div>
+<script>
+const btn=document.getElementById('btn'),msg=document.getElementById('msg');
+let ctx,stream,proc,chunks=[],recording=false;
+const SENT=["Please open the gate for me.","Today I am testing my smart voice lock system.","My voice is used to verify my identity.","Please recognize my voice and open the gate.","Please verify my voice before granting access.","The security system is ready for testing.","My voice should be recognized correctly.","Only the registered user should get access."];
+let i=0;function nextPhrase(){document.getElementById('phrase').textContent=SENT[i++%SENT.length]}nextPhrase();
+async function info(){try{const d=await (await fetch('/enroll_info')).json();
+ document.getElementById('info').textContent='Samples: '+Object.entries(d).map(([n,c])=>n+' '+c).join(' | ')}catch(e){}}info();
+function encodeWAV(s,rate){const buf=new ArrayBuffer(44+s.length*2),v=new DataView(buf);
+ const w=(o,t)=>{for(let k=0;k<t.length;k++)v.setUint8(o+k,t.charCodeAt(k))};
+ w(0,'RIFF');v.setUint32(4,36+s.length*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);
+ v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);
+ v.setUint16(34,16,true);w(36,'data');v.setUint32(40,s.length*2,true);
+ for(let k=0;k<s.length;k++){const x=Math.max(-1,Math.min(1,s[k]));v.setInt16(44+k*2,x<0?x*0x8000:x*0x7FFF,true)}
+ return new Blob([v],{type:'audio/wav'})}
+async function start(){
+ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+ ctx=new (window.AudioContext||window.webkitAudioContext)();
+ const src=ctx.createMediaStreamSource(stream);proc=ctx.createScriptProcessor(4096,1,1);chunks=[];
+ proc.onaudioprocess=e=>chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+ src.connect(proc);proc.connect(ctx.destination);recording=true;btn.textContent='⏹ Stop';btn.classList.add('rec');msg.textContent='Listening...'}
+async function stop(){
+ recording=false;btn.classList.remove('rec');btn.textContent='🎤 Record';
+ proc.disconnect();stream.getTracks().forEach(t=>t.stop());
+ const len=chunks.reduce((a,c)=>a+c.length,0),all=new Float32Array(len);let o=0;for(const c of chunks){all.set(c,o);o+=c.length}
+ const wav=encodeWAV(all,ctx.sampleRate);ctx.close();msg.textContent='Saving...';
+ const fd=new FormData();fd.append('audio',wav,'e.wav');fd.append('name',document.getElementById('name').value);fd.append('pin',document.getElementById('pin').value);
+ try{const d=await (await fetch('/enroll_upload',{method:'POST',body:fd})).json();msg.textContent=d.msg;if(d.ok){nextPhrase();info()}}
+ catch(e){msg.textContent='Server error'}}
+btn.onclick=()=>recording?stop():start();
+</script></body></html>
